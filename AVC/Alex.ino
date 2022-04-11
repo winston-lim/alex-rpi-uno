@@ -85,6 +85,13 @@ unsigned long newDist;
 unsigned long deltaTicks;
 unsigned long targetTicks;
 
+// Ultrasonic variables
+#define TRIGGER_PIN 12
+#define ECHO_PIN 13
+#define SPEED_OF_SOUND 0.0345
+#define THRESHOLD_DISTANCE 7 // refers to distance before auto stop; maps to 2.5cm
+volatile bool hasStopped = false;
+
 /*
 
    Alex Communication Routines.
@@ -150,16 +157,6 @@ void dbprint(char *format, ...)
     va_start(args, format);
     vsprintf(buffer, format, args);
     sendMessage(buffer);
-}
-
-void print_input(float param1, float param2)
-{
-    char _param1[11];
-    char _param2[11];
-    String(param1).toCharArray(_param1, 5);
-    String(param2).toCharArray(_param2, 5);
-    dbprint(_param1);
-    dbprint(_param2);
 }
 
 void sendBadPacket()
@@ -241,6 +238,16 @@ void enablePullups()
 // Functions to be called by INT0 and INT1 ISRs.
 void leftISR()
 {
+    double val = getUltrasonicReading();
+    if (val < THRESHOLD_DISTANCE && !hasStopped)
+    {
+        stop();
+        hasStopped = true; // allow further movements(reverse) after stopping
+        return;
+    }
+    // char x[8];
+    // dtostrf(val, 5, 2, x);
+    // dbprint(x);
     switch (dir)
     {
     case FORWARD:
@@ -277,6 +284,16 @@ void rightISR()
         rightReverseTicksTurns++;
         break;
     }
+}
+
+double getUltrasonicReading()
+{
+    digitalWrite(TRIGGER_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIGGER_PIN, LOW);
+    int sec = pulseIn(ECHO_PIN, HIGH);
+    double cms = (sec * SPEED_OF_SOUND / 2);
+    return cms;
 }
 
 // Set up the external interrupt pins INT0 and INT1
@@ -461,14 +478,14 @@ void reverse(float dist, float speed)
     }
     else
     {
-        deltaDist = dist;
+        deltaDist = (int)(dist * 0.78);
     }
     newDist = reverseDist + deltaDist;
     dir = BACKWARD;
     int val = pwmVal(speed);
     if (dist == 10)
     {
-        analogWrite(RR, (int)(val * 0.75));
+        analogWrite(RR, (int)(val * 0.70));
         analogWrite(LR, (int)(val));
         analogWrite(LF, 0);
         analogWrite(RF, 0);
@@ -664,6 +681,7 @@ void handleCommand(TPacket *command)
         param2 = command->params[1] + '0';
         if (param1 >= 48 && param2 >= 48 && param1 <= 148 && param2 <= 148)
         {
+            hasStopped = false; // each forward motion needs to check obstacle distance
             forward((float)command->params[0], (float)command->params[1]);
         }
         else
@@ -783,6 +801,7 @@ void setup()
     startMotors();
     enablePullups();
     initializeState();
+    setupUltrasonic();
     sei();
 }
 
