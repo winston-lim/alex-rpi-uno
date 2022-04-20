@@ -144,11 +144,11 @@ void baremetal_analog_write(int port, int pwmVal)
     */
     if (port == LF)
     {
-        OCROA = pwmVal;
+        OCR0A = pwmVal;
     }
     else if (port == LR)
     {
-        OCROB = pwmVal;
+        OCR0B = pwmVal;
     }
     else if (port == RF)
     {
@@ -235,7 +235,7 @@ void writeSerial(const char *buffer, int len)
 
     for (int length = 1; length < len && result == BUFFER_OK; ++length)
     {
-        result = writeBuffer(&txBuffer, buffer[i]);
+        result = writeBuffer(&txBuffer, buffer[length]);
     }
 
     // Enable and trigger USART_UDRE interrupt
@@ -578,7 +578,7 @@ ISR(USART_RX_vect)
 ISR(USART_UDRE_vect)
 {
     unsigned char data;
-    TBufferResult result = readBuffer(&txBuff, &data);
+    TBufferResult result = readBuffer(&txBuffer, &data);
 
     if (result == BUFFER_OK)
     {
