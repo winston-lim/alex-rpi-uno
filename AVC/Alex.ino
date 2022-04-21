@@ -7,7 +7,7 @@
 
 /**
  * Extra features implemented
- * 1. Baremetal
+ * 1. Attempted Full Baremetal(pwm, ultrasonic, serial)
  * 2. Calibration for motor controls
  * 3. Sanitizing inputs(checking params of commands for invalid values that are not numbers)
  * 4. Auto-stop Alex(uses ultrasonic sensors to automatically stop if obstacle is < THRESHOlD_DISTANCE away)
@@ -124,9 +124,12 @@ unsigned int get_baud_rate()
 // Gets distance of obstacle from the front of Alex
 double getUltrasonicReading()
 {
-    digitalWrite(TRIGGER_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIGGER_PIN, LOW);
+    PORTB |= 0b00001000;
+    // digitalWrite(TRIGGER_PIN, HIGH);
+    _delay_us(10);
+    // delayMicroseconds(10);
+    PORTB &= 0b11101111;
+    // digitalWrite(TRIGGER_PIN, LOW);
     int sec = pulseIn(ECHO_PIN, HIGH);
     double cms = (sec * SPEED_OF_SOUND / 2);
     return cms;
@@ -231,11 +234,9 @@ int readSerial(char *buffer)
 void writeSerial(const char *buffer, int len)
 {
     // Serial.write(buffer, len);
-    TBufferResult result = BUFFER_OK;
-
-    for (int length = 1; length < len && result == BUFFER_OK; ++length)
+    for (int i = 1; i < len; ++i)
     {
-        result = writeBuffer(&txBuffer, buffer[length]);
+        writeBuffer(&txBuffer, buffer[i]);
     }
 
     // Enable and trigger USART_UDRE interrupt
@@ -692,9 +693,12 @@ void initializeState()
 
 void setupUltrasonic()
 {
-    pinMode(TRIGGER_PIN, OUTPUT);
-    digitalWrite(TRIGGER_PIN, LOW);
-    pinMode(ECHO_PIN, INPUT);
+    DDRB |= 0b00010000; // PB4
+    // pinMode(TRIGGER_PIN, OUTPUT);
+    PORTB &= 0b11101111;
+    // digitalWrite(TRIGGER_PIN, LOW);
+    DDRB |= 0b00100000; // PB5
+    // pinMode(ECHO_PIN, INPUT);
 }
 
 void setup()
