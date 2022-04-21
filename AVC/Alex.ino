@@ -10,7 +10,8 @@
  * 1. Attempted Full Baremetal(pwm, ultrasonic, serial)
  * 2. Calibration for motor controls
  * 3. Sanitizing inputs(checking params of commands for invalid values that are not numbers)
- * 4. Auto-stop Alex(uses ultrasonic sensors to automatically stop if obstacle is < THRESHOlD_DISTANCE away)
+ * 4. Emergency-stop Alex(uses ultrasonic sensors to automatically stop if obstacle is < THRESHOlD_DISTANCE away)
+ * 5. TLS Setup on operator device/RPi
  */
 
 typedef enum
@@ -119,7 +120,7 @@ unsigned int get_baud_rate()
 {
     // 16Mhz is the clockrate for Uno
     // 9600 is desired baurate rate
-    return (16000000 / (16 * 9600)) - 1;
+    return 16000000 / 16 / 9600 - 1;
 }
 // Gets distance of obstacle from the front of Alex
 double getUltrasonicReading()
