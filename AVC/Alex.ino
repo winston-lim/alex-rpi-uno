@@ -7,7 +7,7 @@
 
 /**
  * Extra features implemented
- * 1. Attempted Full Baremetal(pwm, ultrasonic, serial)
+ * 1. Full Baremetal(PWM, ultrasonic, , GPIO, interrupts, serial)
  * 2. Calibration for motor controls
  * 3. Sanitizing inputs(checking params of commands for invalid values that are not numbers)
  * 4. Emergency-stop Alex(uses ultrasonic sensors to automatically stop if obstacle is < THRESHOlD_DISTANCE away)
