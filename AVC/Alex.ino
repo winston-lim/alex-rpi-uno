@@ -620,7 +620,7 @@ void setupEINT()
 // Set up the serial connection
 void setupSerial()
 {
-    Serial.begin(9600);
+    // Serial.begin(9600);
 
     // Initialise send and receive buffer to appropriate length(in BUF_LEN macro)
     initBuffer(&txBuffer, PACKET_SIZE); // PACKET_SIZE = 140
@@ -683,6 +683,18 @@ void startMotors()
     TCCR0A = 0b10100001;
     // Select phase correct pwm, clear OC1A/B on compare match
     TCCR1A = 0b10100001;
+}
+
+void initializeState()
+{
+    clearCounters();
+}
+
+void setupUltrasonic()
+{
+    pinMode(TRIGGER_PIN, OUTPUT);
+    digitalWrite(TRIGGER_PIN, LOW);
+    pinMode(ECHO_PIN, INPUT);
 }
 
 void setup()
@@ -895,23 +907,9 @@ void stop()
 }
 
 /*
-   Alex's setup and run codes
+   ##### Alex's main loop
 
 */
-
-// Intialize Vincet's internal states
-
-void initializeState()
-{
-    clearCounters();
-}
-
-void setupUltrasonic()
-{
-    pinMode(TRIGGER_PIN, OUTPUT);
-    digitalWrite(TRIGGER_PIN, LOW);
-    pinMode(ECHO_PIN, INPUT);
-}
 
 void loop()
 {
