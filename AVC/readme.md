@@ -358,18 +358,16 @@ We then cast these values into `float` and pass it into its respective motor con
     ```
 
   - Next, we start the timers
-
-  ```
-  // Start the PWM for Alex's motors.
-  void startMotors()
-  {
-      // Select phase correct pwm, clear OC0A/B on compare match
-      TCCR0A = 0b10100001;
-      // Select phase correct pwm, clear OC1A/B on compare match
-      TCCR1A = 0b10100001;
-  }
-  ```
-
+    ```
+    // Start the PWM for Alex's motors.
+    void startMotors()
+    {
+        // Select phase correct pwm, clear OC0A/B on compare match
+        TCCR0A = 0b10100001;
+        // Select phase correct pwm, clear OC1A/B on compare match
+        TCCR1A = 0b10100001;
+    }
+    ```
   - This will set up PWM output at OC0A/B and OC1A/B based on the OCR0A/B and OCR1A/B values
   - Then in our baremetal version of analog write, we simply set the value of OCRnX
     ```
