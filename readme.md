@@ -334,3 +334,154 @@ Placed at the front of Alex, with the consideration that we will move
 Alex forward only(except when turning or recovering from an emergency-stop). The
 ultrasonic sensor is used to detect obstacles that are too close to Alex, which will trigger
 an auto-stop to prevent collisions, based on our code
+
+## ROS
+
+### What is ROS
+
+Robot Operating System(ROS) is a set of open source software libraries and tools that help you build robot applications
+In this context, the important feature is that ROS provides means to run code across multiple computers.
+
+The ROS runtime "graph" is a peer-to-peer network of processes(potentially distributed across machines) that are loosely coupled using the ROS communicatioon infrastructure.
+
+ROS only runs on Unix-based systems for now.
+
+### General concepts/terminologies
+
+- Packages: Main unit for organizing software in ROS - a package may contain ROS runtime processes a.k.a. nodes, a ROS-dependent library, data sets etc. Packages are the most atomic buld item and release item in ROS
+- Metapackages: specialized packages which only serve to represent a group of related package
+- Package manifests: provides metadata about a package such as its name, versions, description etc
+- Repositories: A collection of packages which share a common version control system(VCS).
+- Message (msg) types: defines the data structures for messages sent in ROS
+- Service (srv) types: define the request and response data structures for services in ROS
+
+### ROS computation graph
+
+The Computation Graph is the peer-to-peer network of ROS processes that are processing data together. Some necessary terminologies are:
+
+- Nodes: processes that perform computation - ROS is designed to be modular i.e. a robot system may contain many nodes that run their own modules. A ROS node is written with the use of a ROS `client` library such as `roscpp` or `rospy`
+- Master: The ROS Master provides name registration and lookip to the rest of the CG - without the Master, nodes would not be able to find each other
+- Parameter Server: allows data to be stored by key in a central location; is part of Master
+- Messages: Nodes communicate with each other by passing `messages`. A message is simply a data structure comprising typed fields. Messages may include nested structures, similar to C structs
+- Topics: Messages are routed via a transport system with a **publish/subscribe semantics**. A node sends out a message by `publishing` to a given topic - a name used to identify the content of a message. Another node interested in that particular data will `subscribe` to the appropriate topic. This decouples the production of information from its consumption.
+- Services: The publish/subscribe model is a flexible communication paradigm, but not sufficient in a distributed system which often requires request/response interactions. Instead, such interactions are done via `services`, whihc are defined by a pair of message structures - request and response structures. A providing node offers a service under a `name` and a client uses the service by sending the request message and awaiting the reply.
+- Bags: Bags are a format for saving and playing back ROS message data. Bags are necessary for developing and testing algorithms.
+  Overall, the ROS `master` acts as a nameservice in the ROS CG. It stores `topics` and `services` registration information for ROS `nodes`. Nodes communicate with the `master` to report their registration information and as they communicate with `master`, they can receive information about other registered nodes and make connections as appropriate. Callbacks to these nodes are run when registration information changes, which allows for nodes to dynamically create connections as new nodes are run.
+
+Nodes connect to other nodes directly; We can think of the `master` as a DNS server which only provides lookup information. Nodes that subscribe to a topic will request conections from nodes that publish in that topic and will establish an agreed upon communication protocol. The most common protocol used in ROS is called `TCPROS` which uses standard TCP/IP sockets.
+
+### ROS Community level
+
+The ROS community level concepts are ROs resources that enable separate communities to exchange software and knowledge
+
+- Distributions: ROS Distributions are collections of versioned `stacks` that one can install. Distributions make it easier to install a collection of software with consistent versioning.
+- Repositories: ROS relies on a netowrk of code repositories, where different institutions can develop and release their own robot software components
+- ROS wiki: The ROS community wiki is the main forum for documenting information about ros. Access it [here](http://wiki.ros.org/)
+
+### ROS in Project Alex
+
+#### 1.1 Installing ROS Melodic https://wiki.ros.org/melodic/Installation/Ubuntu
+
+In Project Alex, we use the ROS Melodic distribution, which is installed on Ubuntu 18.04. These come with a series of tools and libraries that are sufficient for our use case.
+
+#### 1.2 Compiling RPLidar and SLAM ROS packages
+
+- Update package list: `sudo apt-get update`
+- Create a catkin workspace: `mkdir -p ~/catkin_ws/src`
+- Change directory: `cd ~/catkin_ws/`
+- Add `setup.bash` to terminal config: `gedit ~/.bashrc` then append lines `source /opt/ros/melodic/setup.bash` and `source ~/catkin_ws/devel/setup.bash`
+- Go to source folder: `cd ~/catin_ws/src`
+- Clone RPLidar package: `git clone https://github.com/robopeak/rplidar_ros/tree/slam'
+- Go back to root of workspace: `cd ~/catkin_ws/`
+- Compile the workspace: `catkin_make`
+
+#### 1.3 Running ROS on RPi and remote operator device
+
+- First, test the connections between our machines by going through mainly step 1 here: http://wiki.ros.org/ROS/NetworkSetup
+
+  - Ensure that both machines are connected over the same network
+  - We know that in our use case, we only have 1 publisher and 1 subsciber, so name resolution is not necessary.
+  - Instead, we use a fixed local config
+
+    On RPI: `export ROS_IP=<local_ip> && export ROS_MASTER_URI=<master_ip>
+
+    On 18.04: `export ROS_IP=<local_ip> && export ROS_MASTER_URI=<master_ip>
+
+- Next, we test ROS across the two machines following this http://wiki.ros.org/ROS/Tutorials/MultipleMachines
+  - Note: we use the above mentioned local config for both machines
+- After verifying that our two machines can communicate over ROS, we can simply use the rplidar_ros package which conveniently has two launch files for our needs
+- `rplidar.launch`:
+
+  ```
+  <launch>
+    <node name="rplidarNode"          pkg="rplidar_ros"  type="rplidarNode" output="screen">
+    <param name="serial_port"         type="string" value="/dev/ttyUSB0"/>
+    <param name="serial_baudrate"     type="int"    value="115200"/>
+    <param name="frame_id"            type="string" value="laser"/>
+    <param name="inverted"            type="bool"   value="false"/>
+    <param name="angle_compensate"    type="bool"   value="true"/>
+    </node>
+  </launch>
+  ```
+
+  - As you can see, `rplidar.launch` runs a single Node(process) with several parameters
+
+- `view_slam.launch`: We edit the default launchfile to remove rplidar.launch since it is run on the RPi
+
+  ```
+  <!--
+    Used for visualising rplidar in action.
+
+    It requires rplidar.launch.
+  -->
+  <launch>
+    <!-- EDITED LINE
+      <include file="$(find rplidar_ros)/launch/rplidar.launch" />
+    -->
+    <include file="$(find rplidar_ros)/launch/hectormapping.launch" />
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find rplidar_ros)/rviz/slam.rviz" />
+  </launch>
+  ```
+
+- `hectormapping.launch`
+
+  ```
+  <!--
+  notice : you should install hector-slam at first,  sudo apt-get install ros-indigo-hector-slam
+            this launch just for test, you should improve the param for the best result.
+
+  E-mail: kint.zhao@slamtec.com
+  -->
+  <launch>
+
+    <node pkg="tf" type="static_transform_publisher" name="link1_broadcaster" args="1 0 0 0 0 0 base_link laser 100" /> <!--change -->
+
+
+      <node pkg="hector_mapping" type="hector_mapping" name="hector_height_mapping" output="screen">
+        <param name="scan_topic" value="scan" />
+      <param name="base_frame" value="base_link" />
+      <param name="odom_frame" value="base_link" />
+
+      <param name="output_timing" value="false"/>
+      <param name="advertise_map_service" value="true"/>
+      <param name="use_tf_scan_transformation" value="true"/>
+      <param name="use_tf_pose_start_estimate" value="false"/>
+      <param name="pub_map_odom_transform" value="true"/>
+      <param name="map_with_known_poses" value="false"/>
+
+      <param name="map_pub_period" value="0.5"/>
+      <param name="update_factor_free" value="0.45"/>
+
+      <param name="map_update_distance_thresh" value="0.02"/>
+      <param name="map_update_angle_thresh" value="0.1"/>
+
+      <param name="map_resolution" value="0.05"/>
+      <param name="map_size" value="1024"/>
+      <param name="map_start_x" value="0.5"/>
+      <param name="map_start_y" value="0.5"/>
+
+    </node>
+  </launch>
+  ```
+
+- As you can see, `view_slam.launch`, which we run on the remote operator device, does most of the work as it runs an `rviz` node i.e. process that runs enviornment mapping visualization, and runs hector SLAM algorithms on the data it receives from the `rplidar` node running on the RPi
