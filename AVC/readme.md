@@ -1,112 +1,267 @@
-# Arduino Uno
+# Firmware Design: Arduino Uno
 
-## Serial Communication with RPi
+## Serial Communications with RPi
 
-### Packet Structure(TPacket)
+We use U(S)ART communications with interrupts.
 
-```
-typedef struct
-{
+### USART with interrupts
 
-	char packetType;
-	char command;
-	char dummy[2]; // Padding to make up 4 bytes
-	char data[MAX_STR_LEN]; // String data
-	uint32_t params[16];
-} TPacket;
-```
+#### Buffer library
 
-### 1. Reading for packets in main loop()
+In this project, we use a buffer library provided by the prof(`buffer.cpp`), which has an implementation for creating, reading and writing to a circular buffer.
 
-```
-TPacket recvPacket; // This holds commands from the Pi
-  TResult result = readPacket(&recvPacket);
+The methods we use are mainly:
 
-  if (result == PACKET_OK)
-    handlePacket(&recvPacket);
-  else if (result == PACKET_BAD)
+- `initBuffer(TBuffer *buffer, unsigned int size)`: To create a circular buffer; must be called before calling `readBuffer` or `writeBuffer`
+- `writeBuffer(TBuffer *buffer, unsigned char data)`: Writes data to buffer and responds with `BUFFER_OK` if space is available. Discards data and returns `BUFFER_FULL` if space is not available. Discards data and returns `BUFFER_INVALID` if buffer was not initialized i.e. `initBuffer()` was not called.
+- `readBuffer(TBuffer *buffer, unsigned char *data)`: Reads from buffer and stores in \*data as a queue(FIFO). If data is available for reading, responds with `BUFFER_OK`. If no data is available, returns `BUFFER_EMPTY`. If buffer was not initialized using `initBuffer()`, returns `BUFFER_INVALID`
+- `dataAvailable(TBuffer *buffer)`: returns true if `buffer->count` is greater than 0 i.e. there is data to be read
+
+#### Serial library
+
+We also use a serialize library(`serialize.cpp`), which we use to serialize and deserialize data packet that we transfer with USART
+
+The methods we use are mainly:
+
+- `serialize()`: serialize a packet of type `TPacket` and return its length
+- `deserialize()`: deserialize a packet and return a `TResult`
+
+#### High level steps
+
+1\. Setup serial communications(pin config)
+
+2\. Define ISRs
+
+3\. Handling reading of packet
+
+4\. Handling writing of packet
+
+#### Setup for serial communications
+
+- Setup pin config
+
+  ```
+  void setupSerial()
   {
-    sendBadPacket();
+      // Initialise send and receive buffer to appropriate length(in BUF_LEN macro)
+      initBuffer(&txBuffer, PACKET_SIZE); // PACKET_SIZE = 140
+      initBuffer(&rxBuffer, PACKET_SIZE);
+
+      // Set bits[2:1] for data size of 8 bits
+      // Clear bit 3 for 1 stop bit
+      // Clear bits[5:4] to disable parity
+      // Clear bits [7:6] to select async mode
+      UCSR0C = 0b00000110;
+      // Clear OCSR0A for to disable double-speed and multiprocessor modes
+      UCSR0A = 0;
+
+      // Set baudrate
+      unsigned int baudrate_config = get_baud_rate();
+      UBRR0H = (unsigned char)(baudrate_config >> 8);
+      UBRR0L = (unsigned char)baudrate_config;
   }
-  else if (result == PACKET_CHECKSUM_BAD)
+  ```
+
+- Set up interrupt service routines(ISRs)
+
+  ```
+  // ISR for serial read
+  ISR(USART_RX_vect)
   {
-    sendBadChecksum();
+      unsigned char data = UDR0;
+      writeBuffer(&rxBuffer, data);
   }
-```
-
-### 2. Handling Packets
-
-```
-void handlePacket(TPacket *packet)
-{
-  switch (packet->packetType)
+  // ISR for serial write
+  ISR(USART_UDRE_vect)
   {
-  case PACKET_TYPE_COMMAND:
-    handleCommand(packet);
-    break;
+      unsigned char data;
+      TBufferResult result = readBuffer(&txBuffer, &data);
 
-  case PACKET_TYPE_RESPONSE:
-    break;
-
-  case PACKET_TYPE_ERROR:
-    break;
-
-  case PACKET_TYPE_MESSAGE:
-    break;
-
-  case PACKET_TYPE_HELLO:
-    break;
+      if (result == BUFFER_OK)
+      {
+          UDR0 = data;
+      }
+      else if (result == BUFFER_EMPTY)
+      {
+          UCSR0B &= 0b11011111;
+      }
   }
-}
-```
+  ```
 
-### 3. Handling commands(motor control)
+  - USART_RX triggers on receive complete i.e. whenenever Uno receives some data from RPi
+    - This ensures rxBuffer is always up to date
+  - USART_UDRE triggers when data register is empty i.e. Uno is able to transfer data to RPi
+    - Even if Uno is able to transfer data, it may not want to i.e. we need to check that `txBuffer` is not empty
 
-```
-void handleCommand(TPacket *command)
-{
-  switch (command->command)
+- Start serial(enabling ISRs)
+
+  ```
+  // Start the serial connection
+  void startSerial()
   {
-  // For movement commands, param[0] = distance, param[1] = speed.
-  case COMMAND_FORWARD:
-    sendOK();
-    forward((float)command->params[0], (float)command->params[1]);
-    break;
-
-  case COMMAND_REVERSE:
-    sendOK();
-    reverse((float)command->params[0], (float)command->params[1]);
-    break;
-
-  case COMMAND_TURN_LEFT:
-    sendOK();
-    left((float)command->params[0], (float)command->params[1]);
-    break;
-
-  case COMMAND_TURN_RIGHT:
-    sendOK();
-    right((float)command->params[0], (float)command->params[1]);
-    break;
-
-  case COMMAND_STOP:
-    sendOK();
-    stop();
-    break;
-
-  case COMMAND_GET_STATS:
-    sendStatus();
-    break;
-
-  case COMMAND_CLEAR_STATS:
-    sendOK();
-    clearOneCounter(command->params[0]);
-    break;
-
-  default:
-    sendBadCommand();
+      // Set RXCIE0 and UDRIE0 bits(5 and 7) to enable interrupts for Receive Complete and USART Data Register Empty conditions.
+      // Set  RXEN0 and TXEN0 bits (3 and 4) to enable the receiver and transmitter
+      UCSR0B = 0b10111000;
   }
-}
-```
+  ```
+
+- Reading
+
+  - The main loop continously calls `readPacket`
+
+    ```
+    TResult readPacket(TPacket *packet)
+    {
+        // Reads in data from the serial port and
+        // deserializes it.Returns deserialized
+        // data in "packet".
+
+        char buffer[PACKET_SIZE];
+        int len;
+
+        len = readSerial(buffer);
+
+        if (len == 0)
+            return PACKET_INCOMPLETE;
+        else
+            return deserialize(buffer, len, packet);
+    }
+    ```
+
+    - `readPacket` will first call `readSerial`, which returns a count
+
+      ```
+      int readSerial(char *buffer)
+      {
+          int count = 0;
+
+          for (; dataAvailable(&rxBuffer); ++count)
+          {
+              readBuffer(&rxBuffer, (unsigned char *)&buffer[count]);
+          }
+          return count;
+      }
+      ```
+
+    - So long as count is >0, some data was passed from serial port, then `readPacket` calls `deserialize()` which returns a `TResult`
+    - If result<`TResult`> is `PACKET_OK`, then it will `handlePacket()`
+
+- Writing
+
+  - Whenever we want to send some data, we first create a TPacket and pass in some data
+
+    ```
+    void sendResponse(TPacket *packet)
+    {
+        // Takes a packet, serializes it then sends it out
+        // over the serial port.
+        char buffer[PACKET_SIZE];
+        int len;
+
+        len = serialize(buffer, packet, sizeof(TPacket));
+        writeSerial(buffer, len);
+    }
+    ```
+
+  - It will serialize the packet, then call `writeSerial()`
+  - `writeSerial` will call `writeBuffer` from `buffer.cpp` which will update `txBuffer`
+
+    ```
+    // Write to the serial port
+    void writeSerial(const char *buffer, int len)
+    {
+        // Serial.write(buffer, len);
+        for (int i = 1; i < len; ++i)
+        {
+            writeBuffer(&txBuffer, buffer[i]);
+        }
+
+        // Enable and trigger USART_UDRE interrupt
+        UDR0 = buffer[0];
+        UCSR0B |= 0b100000;
+    }
+    ```
+
+  - Then, we trigger the USART_UDRE interrupt to write to the `UDR0` register(see the ISR above)
+
+### Handling Packets
+
+- In the above, when we receive a packet, we mentioned that if `TResult == PACKET_OK`, we call `handlePacket()`
+
+  ```
+  void handlePacket(TPacket *packet)
+  {
+    switch (packet->packetType)
+    {
+    case PACKET_TYPE_COMMAND:
+      handleCommand(packet);
+      break;
+
+    case PACKET_TYPE_RESPONSE:
+      break;
+
+    case PACKET_TYPE_ERROR:
+      break;
+
+    case PACKET_TYPE_MESSAGE:
+      break;
+
+    case PACKET_TYPE_HELLO:
+      break;
+    }
+  }
+  ```
+
+- Handle packet checks `packet->packetType`, then calls `handleCommand` where applicable
+
+  ```
+  void handleCommand(TPacket *command)
+  {
+    switch (command->command)
+    {
+    // For movement commands, param[0] = distance, param[1] = speed.
+    case COMMAND_FORWARD:
+      sendOK();
+      forward((float)command->params[0], (float)command->params[1]);
+      break;
+
+    case COMMAND_REVERSE:
+      sendOK();
+      reverse((float)command->params[0], (float)command->params[1]);
+      break;
+
+    case COMMAND_TURN_LEFT:
+      sendOK();
+      left((float)command->params[0], (float)command->params[1]);
+      break;
+
+    case COMMAND_TURN_RIGHT:
+      sendOK();
+      right((float)command->params[0], (float)command->params[1]);
+      break;
+
+    case COMMAND_STOP:
+      sendOK();
+      stop();
+      break;
+
+    case COMMAND_GET_STATS:
+      sendStatus();
+      break;
+
+    case COMMAND_CLEAR_STATS:
+      sendOK();
+      clearOneCounter(command->params[0]);
+      break;
+
+    default:
+      sendBadCommand();
+    }
+  }
+  ```
+
+- `handleCommand` checks for the specific command which is in `command->command` and will extract the parameters associated with the packet in `command->params[]`
+- Lastly, it will call the relevant command handler, such as `forward()` or `reverse()`
 
 ## Distance and speed controls
 
@@ -168,3 +323,80 @@ We then cast these values into `float` and pass it into its respective motor con
   ```
   analogWrite(LF, pwmValue(speed));
   ```
+
+- Much later, we updated analogWrite() to use full baremetal programming
+
+  - First, we update setupMotors to use timers()
+
+    ```
+    void setupMotors()
+    {
+        /* Our motor set up is:
+              A1IN - Pin 6, PD6, OC0A == LF
+              A2IN - Pin 5, PD5, OC0B == LR
+              B1IN - Pin 10, PB2, OC1B == RF
+              B2In - Pin 9, PB1, OC1A == RR
+        */
+        // Set PD5/6
+        DDRD |= (PIN6 | PIN5);
+        // Initialize timer0 and OCR0A/B to 0
+        TCNT0 = 0;
+        OCR0A = 0;
+        OCR0B = 0;
+        // Set prescalar value of 64
+        TCCR0B = 0b00000011;
+
+        // Set PB2/3
+        DDRB |= (PIN9 | PIN10);
+        // Initialize timer1 and OCR1A/B to 0
+        TCNT1 = 0;
+        OCR1A = 0;
+        OCR1B = 0;
+        // Set prescalar value of 64
+        TCCR1B = 0b00000011;
+    }
+    ```
+
+  - Next, we start the timers
+
+  ```
+  // Start the PWM for Alex's motors.
+  void startMotors()
+  {
+      // Select phase correct pwm, clear OC0A/B on compare match
+      TCCR0A = 0b10100001;
+      // Select phase correct pwm, clear OC1A/B on compare match
+      TCCR1A = 0b10100001;
+  }
+  ```
+
+  - This will set up PWM output at OC0A/B and OC1A/B based on the OCR0A/B and OCR1A/B values
+  - Then in our baremetal version of analog write, we simply set the value of OCRnX
+    ```
+    void baremetal_analog_write(int port, int pwmVal)
+    {
+        // Our setup pins are reversed i.e. front is back, back is front
+        /* Our motor set up is:
+              A1IN - Pin 6, PD6, OC0A == LF
+              A2IN - Pin 5, PD5, OC0B == LR
+              B1IN - Pin 10, PB2, OC1B == RF
+              B2In - Pin 9, PB1, OC1A == RR
+        */
+        if (port == LF)
+        {
+            OCR0A = pwmVal;
+        }
+        else if (port == LR)
+        {
+            OCR0B = pwmVal;
+        }
+        else if (port == RF)
+        {
+            OCR1B = pwmVal;
+        }
+        else if (port == RR)
+        {
+            OCR1A = pwmVal;
+        }
+    }
+    ```
